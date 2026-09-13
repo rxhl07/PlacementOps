@@ -1,0 +1,364 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// 1. Authentication & Users
+// -------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  COORDINATOR
+  COMPANY_COORDINATOR
+  STUDENT
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(255)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  role         Role     @default(STUDENT)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  student            Student?
+  companyCoordinator CompanyCoordinator?
+  auditLogs          AuditLog[]
+
+  @@map("users")
+}
+
+// -------------------------------------------------------------
+// 2. Placement Drive & Core Domain
+// -------------------------------------------------------------
+
+model PlacementDrive {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @db.VarChar(255)
+  academicYear String   @map("academic_year") @db.VarChar(50)
+  startDate    DateTime @map("start_date") @db.Date
+  endDate      DateTime @map("end_date") @db.Date
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  companies        Company[]
+  rooms            Room[]
+  panels           Panel[]
+  scheduleVersions ScheduleVersion[]
+  disruptions      Disruption[]
+
+  @@map("placement_drives")
+}
+
+enum StudentStatus {
+  ACTIVE
+  WITHDRAWN
+}
+
+model Student {
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @unique @map("user_id") @db.Uuid
+  name           String        @db.VarChar(255)
+  rollNumber     String        @unique @map("roll_number") @db.VarChar(100)
+  branch         String        @db.VarChar(100)
+  cgpa           Decimal       @db.Decimal(4, 2)
+  graduationYear Int           @map("graduation_year")
+  status         StudentStatus @default(ACTIVE)
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  user                 User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shortlists           StudentCompanyShortlist[]
+  interviewAssignments InterviewAssignment[]
+  disruptions          Disruption[]
+
+  @@index([branch, cgpa])
+  @@map("students")
+}
+
+enum CompanyPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model Company {
+  id                String          @id @default(uuid()) @db.Uuid
+  placementDriveId  String          @map("placement_drive_id") @db.Uuid
+  name              String          @db.VarChar(255)
+  priority          CompanyPriority @default(MEDIUM)
+  minimumCgpa       Decimal         @default(0.0) @map("minimum_cgpa") @db.Decimal(4, 2)
+  eligibleBranches  String[]        @default([]) @map("eligible_branches")
+  expectedArrival   DateTime        @map("expected_arrival")
+  expectedDeparture DateTime        @map("expected_departure")
+  actualArrival     DateTime?       @map("actual_arrival")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  placementDrive       PlacementDrive            @relation(fields: [placementDriveId], references: [id], onDelete: Cascade)
+  coordinators         CompanyCoordinator[]
+  rounds               CompanyRound[]
+  shortlists           StudentCompanyShortlist[]
+  interviewAssignments InterviewAssignment[]
+  disruptions          Disruption[]
+
+  @@index([placementDriveId])
+  @@map("companies")
+}
+
+model CompanyCoordinator {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String   @db.VarChar(255)
+  phone     String?  @db.VarChar(50)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("company_coordinators")
+}
+
+model CompanyRound {
+  id                 String   @id @default(uuid()) @db.Uuid
+  companyId          String   @map("company_id") @db.Uuid
+  name               String   @db.VarChar(100)
+  sequenceOrder      Int      @map("sequence_order")
+  durationMinutes    Int      @map("duration_minutes")
+  requiredPanelCount Int      @default(1) @map("required_panel_count")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  company              Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  interviewAssignments InterviewAssignment[]
+
+  @@unique([companyId, sequenceOrder])
+  @@map("company_rounds")
+}
+
+model StudentCompanyShortlist {
+  id            String   @id @default(uuid()) @db.Uuid
+  studentId     String   @map("student_id") @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  shortlistedAt DateTime @default(now()) @map("shortlisted_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, companyId])
+  @@map("student_company_shortlists")
+}
+
+// -------------------------------------------------------------
+// 3. Infrastructure & Resources (Rooms and Panels)
+// -------------------------------------------------------------
+
+enum RoomType {
+  INTERVIEW
+  GROUP_DISCUSSION
+  APTITUDE
+  WAITING
+}
+
+model Room {
+  id               String   @id @default(uuid()) @db.Uuid
+  placementDriveId String   @map("placement_drive_id") @db.Uuid
+  name             String   @db.VarChar(100)
+  type             RoomType @default(INTERVIEW)
+  capacity         Int      @default(1)
+  isAvailable      Boolean  @default(true) @map("is_available")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  placementDrive       PlacementDrive        @relation(fields: [placementDriveId], references: [id], onDelete: Cascade)
+  availability         RoomAvailability[]
+  interviewAssignments InterviewAssignment[]
+  disruptions          Disruption[]
+
+  @@unique([placementDriveId, name])
+  @@map("rooms")
+}
+
+model RoomAvailability {
+  id          String   @id @default(uuid()) @db.Uuid
+  roomId      String   @map("room_id") @db.Uuid
+  startTime   DateTime @map("start_time")
+  endTime     DateTime @map("end_time")
+  isAvailable Boolean  @default(true) @map("is_available")
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, startTime, endTime])
+  @@map("room_availabilities")
+}
+
+model Panel {
+  id               String   @id @default(uuid()) @db.Uuid
+  placementDriveId String   @map("placement_drive_id") @db.Uuid
+  name             String   @db.VarChar(100)
+  specialization   String?  @db.VarChar(255)
+  isAvailable      Boolean  @default(true) @map("is_available")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  placementDrive       PlacementDrive        @relation(fields: [placementDriveId], references: [id], onDelete: Cascade)
+  availability         PanelAvailability[]
+  interviewAssignments InterviewAssignment[]
+  disruptions          Disruption[]
+
+  @@unique([placementDriveId, name])
+  @@map("panels")
+}
+
+model PanelAvailability {
+  id          String   @id @default(uuid()) @db.Uuid
+  panelId     String   @map("panel_id") @db.Uuid
+  startTime   DateTime @map("start_time")
+  endTime     DateTime @map("end_time")
+  isAvailable Boolean  @default(true) @map("is_available")
+
+  panel Panel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+
+  @@index([panelId, startTime, endTime])
+  @@map("panel_availabilities")
+}
+
+// -------------------------------------------------------------
+// 4. Scheduling & Dynamic Replanning
+// -------------------------------------------------------------
+
+model ScheduleVersion {
+  id               String   @id @default(uuid()) @db.Uuid
+  placementDriveId String   @map("placement_drive_id") @db.Uuid
+  versionNumber    Int      @map("version_number")
+  isCurrent        Boolean  @default(false) @map("is_current")
+  triggerReason    String   @map("trigger_reason") @db.VarChar(255)
+  disruptionId     String?  @map("disruption_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  placementDrive PlacementDrive        @relation(fields: [placementDriveId], references: [id], onDelete: Cascade)
+  disruption     Disruption?           @relation(fields: [disruptionId], references: [id], onDelete: SetNull)
+  assignments    InterviewAssignment[]
+  diffsAsOld     ScheduleDiff[]        @relation("OldScheduleDiff")
+  diffsAsNew     ScheduleDiff[]        @relation("NewScheduleDiff")
+
+  @@unique([placementDriveId, versionNumber])
+  @@index([placementDriveId, isCurrent])
+  @@map("schedule_versions")
+}
+
+enum AssignmentStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model InterviewAssignment {
+  id                String           @id @default(uuid()) @db.Uuid
+  scheduleVersionId String           @map("schedule_version_id") @db.Uuid
+  studentId         String           @map("student_id") @db.Uuid
+  companyId         String           @map("company_id") @db.Uuid
+  roundId           String           @map("round_id") @db.Uuid
+  roomId            String           @map("room_id") @db.Uuid
+  panelId           String           @map("panel_id") @db.Uuid
+  startTime         DateTime         @map("start_time")
+  endTime           DateTime         @map("end_time")
+  status            AssignmentStatus @default(SCHEDULED)
+  version           Int              @default(1)
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  scheduleVersion ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Cascade)
+  student         Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  round           CompanyRound    @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  room            Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  panel           Panel           @relation(fields: [panelId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleVersionId])
+  @@index([scheduleVersionId, studentId, startTime, endTime])
+  @@index([scheduleVersionId, roomId, startTime, endTime])
+  @@index([scheduleVersionId, panelId, startTime, endTime])
+  @@map("interview_assignments")
+}
+
+enum DisruptionType {
+  COMPANY_DELAY
+  PANEL_UNAVAILABLE
+  STUDENT_WITHDRAWAL
+  ROOM_UNAVAILABLE
+}
+
+model Disruption {
+  id               String         @id @default(uuid()) @db.Uuid
+  placementDriveId String         @map("placement_drive_id") @db.Uuid
+  type             DisruptionType
+  description      String         @db.Text
+  companyId        String?        @map("company_id") @db.Uuid
+  panelId          String?        @map("panel_id") @db.Uuid
+  roomId           String?        @map("room_id") @db.Uuid
+  studentId        String?        @map("student_id") @db.Uuid
+  isResolved       Boolean        @default(false) @map("is_resolved")
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  placementDrive   PlacementDrive    @relation(fields: [placementDriveId], references: [id], onDelete: Cascade)
+  company          Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  panel            Panel?            @relation(fields: [panelId], references: [id], onDelete: SetNull)
+  room             Room?             @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  student          Student?          @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  scheduleVersions ScheduleVersion[]
+
+  @@map("disruptions")
+}
+
+enum ScheduleChangeType {
+  MOVED
+  CANCELLED
+  ADDED
+}
+
+model ScheduleDiff {
+  id                   String             @id @default(uuid()) @db.Uuid
+  oldScheduleVersionId String             @map("old_schedule_version_id") @db.Uuid
+  newScheduleVersionId String             @map("new_schedule_version_id") @db.Uuid
+  changeType           ScheduleChangeType @map("change_type")
+  assignmentId         String             @map("assignment_id") @db.Uuid
+  details              Json
+  createdAt            DateTime           @default(now()) @map("created_at")
+
+  oldScheduleVersion ScheduleVersion @relation("OldScheduleDiff", fields: [oldScheduleVersionId], references: [id], onDelete: Cascade)
+  newScheduleVersion ScheduleVersion @relation("NewScheduleDiff", fields: [newScheduleVersionId], references: [id], onDelete: Cascade)
+
+  @@index([oldScheduleVersionId, newScheduleVersionId])
+  @@map("schedule_diffs")
+}
+
+// -------------------------------------------------------------
+// 5. Auditing
+// -------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  action    String   @db.VarChar(100)
+  entity    String   @db.VarChar(100)
+  entityId  String   @map("entity_id") @db.Uuid
+  oldValues Json?    @map("old_values")
+  newValues Json?    @map("new_values")
+  reason    String?  @db.VarChar(255)
+  timestamp DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
