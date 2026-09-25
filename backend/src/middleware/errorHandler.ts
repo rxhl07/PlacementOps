@@ -12,6 +12,7 @@ export const errorHandler = (
             success: false,
             error: {
                 message: err.message,
+                ...(err.code ? { code: err.code } : {}),
             },
         });
         return;
