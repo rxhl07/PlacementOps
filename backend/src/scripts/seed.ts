@@ -3,9 +3,47 @@ import bcrypt from 'bcryptjs';
 import { CompanyPriority, Role } from '@prisma/client';
 
 async function seed() {
+    console.log('--- Wiping Existing Database Records ---');
+    // Wipe join tables first to avoid foreign key constraint violations
+    await prisma.studentCompanyShortlist.deleteMany();
+    await prisma.interviewAssignment.deleteMany();
+    await prisma.scheduleVersion.deleteMany();
+    await prisma.companyRound.deleteMany();
+    await prisma.companyCoordinator.deleteMany();
+    await prisma.company.deleteMany();
+    await prisma.student.deleteMany();
+    await prisma.room.deleteMany();
+    await prisma.panel.deleteMany();
+    await prisma.user.deleteMany();
+    await prisma.placementDrive.deleteMany();
+
     console.log('--- Starting Realistic PlacementOps Dataset Seeding ---');
 
-    // 1. Create Placement Drive
+    // Common password hash for all seed accounts: "password123"
+    const commonPasswordHash = await bcrypt.hash('password123', 10);
+
+    // 1. Create Core Administrative / Operations Users
+    console.log('Creating Admin & Coordinator accounts...');
+
+    await prisma.user.create({
+        data: {
+            email: 'admin@campus.edu',
+            passwordHash: commonPasswordHash,
+            role: Role.ADMIN,
+        },
+    });
+
+    await prisma.user.create({
+        data: {
+            email: 'coordinator@campus.edu',
+            passwordHash: commonPasswordHash,
+            role: Role.COORDINATOR,
+        },
+    });
+
+    console.log('Created admin@campus.edu and coordinator@campus.edu accounts.');
+
+    // 2. Create Placement Drive
     const drive = await prisma.placementDrive.create({
         data: {
             name: '2026 Campus Placement Drive',
@@ -17,7 +55,7 @@ async function seed() {
 
     console.log(`Created Drive: ${drive.name} (${drive.id})`);
 
-    // 2. Create Rooms (20 Rooms)
+    // 3. Create Rooms (20 Rooms)
     const roomPromises = [];
     for (let i = 1; i <= 20; i++) {
         roomPromises.push(
@@ -33,7 +71,7 @@ async function seed() {
     const rooms = await Promise.all(roomPromises);
     console.log(`Created ${rooms.length} Rooms.`);
 
-    // 3. Create Panels (15 Panels)
+    // 4. Create Panels (15 Panels)
     const panelPromises = [];
     for (let i = 1; i <= 15; i++) {
         panelPromises.push(
@@ -49,7 +87,7 @@ async function seed() {
     const panels = await Promise.all(panelPromises);
     console.log(`Created ${panels.length} Panels.`);
 
-    // 4. Create Companies (~35 Companies)
+    // 5. Create Companies (~35 Companies)
     const companyNames = [
         'Google', 'Microsoft', 'Amazon', 'Apple', 'Meta',
         'Goldman Sachs', 'JPMorgan', 'Morgan Stanley', 'Uber', 'Salesforce',
@@ -88,19 +126,18 @@ async function seed() {
     }
     console.log(`Created ${companies.length} Companies with rounds.`);
 
-    // 5. Seed Students (~800 Students)
+    // 6. Seed Students (~800 Students)
     console.log('Generating ~800 Student accounts and profiles...');
-    const passwordHash = await bcrypt.hash('student123', 10);
     const studentIds: string[] = [];
 
     for (let i = 1; i <= 800; i++) {
         const branch = branches[i % branches.length];
-        const cgpa = parseFloat((6.0 + (i % 41) * 0.1).toFixed(2)); // CGPA ranges 6.00 to 10.00
+        const cgpa = parseFloat((6.0 + (i % 41) * 0.1).toFixed(2));
 
         const user = await prisma.user.create({
             data: {
                 email: `student${i}@campus.edu`,
-                passwordHash,
+                passwordHash: commonPasswordHash,
                 role: Role.STUDENT,
                 student: {
                     create: {
@@ -121,18 +158,17 @@ async function seed() {
     }
     console.log(`Created ${studentIds.length} Student profiles.`);
 
-    // 6. Create Overlapping Shortlists
+    // 7. Create Shortlist Links
     console.log('Building shortlist relationships...');
     let shortlistCount = 0;
 
     for (const company of companies) {
-        // Fetch students eligible for this company based on CGPA and Branch
         const eligibleStudents = await prisma.student.findMany({
             where: {
                 cgpa: { gte: company.minimumCgpa },
                 ...(company.eligibleBranches.length > 0 ? { branch: { in: company.eligibleBranches } } : {}),
             },
-            take: 40, // Limit to 40 candidates per company shortlist
+            take: 40,
         });
 
         for (const st of eligibleStudents) {

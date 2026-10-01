@@ -19,21 +19,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [loading, setLoading] = useState<boolean>(true);
 
     useEffect(() => {
+        let isMounted = true;
+
         const initializeAuth = async () => {
-            if (token) {
+            const storedToken = localStorage.getItem('placementops_token');
+
+            if (storedToken) {
                 try {
                     const userData = await authApi.me();
-                    setUser(userData);
+                    if (isMounted) setUser(userData);
                 } catch (error) {
-                    console.error('[Auth]: Failed to fetch current user profile', error);
-                    logout();
+                    console.error('[Auth]: Failed to fetch user profile', error);
+                    localStorage.removeItem('placementops_token');
+                    if (isMounted) {
+                        setToken(null);
+                        setUser(null);
+                    }
                 }
             }
-            setLoading(false);
+
+            if (isMounted) {
+                setLoading(false);
+            }
         };
 
         initializeAuth();
-    }, [token]);
+
+        return () => {
+            isMounted = false;
+        };
+    }, []);
 
     const login = async (email: string, password: string) => {
         const response = await authApi.login({ email, password });

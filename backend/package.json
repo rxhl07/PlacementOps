@@ -14,7 +14,7 @@
     "db:studio": "prisma studio",
     "test": "jest --detectOpenHandles",
     "test:watch": "jest --watch",
-    "seed:data": "ts-node src/scripts/seedRealisticDataset.ts"
+    "seed:data": "ts-node src/scripts/seed.ts"
   },
   "keywords": [],
   "author": "",
