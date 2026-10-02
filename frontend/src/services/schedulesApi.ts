@@ -1,13 +1,17 @@
 import { apiClient } from './apiClient';
-import { ApiResponse, ScheduleVersion } from '../types/domain';
 
 export const schedulesApi = {
-    getActiveSchedule: async (driveId: string) => {
-        const res = await apiClient.get<ApiResponse<ScheduleVersion>>(`/schedules/active/${driveId}`);
-        return res.data.data!;
+    // ... existing methods
+    generateSchedule: async (placementDriveId: string) => {
+        const response = await apiClient.post(
+            `/schedules/generate/${placementDriveId}`,
+            {},
+            { timeout: 0 } // Increased to 60 seconds for solver execution
+        );
+        return response.data;
     },
-    generateSchedule: async (driveId: string) => {
-        const res = await apiClient.post<ApiResponse<unknown>>(`/schedules/generate/${driveId}`);
-        return res.data.data!;
+    getActiveSchedule: async (placementDriveId: string) => {
+        const response = await apiClient.get(`/schedules/active/${placementDriveId}`);
+        return response.data;
     },
 };

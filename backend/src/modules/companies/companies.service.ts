@@ -3,6 +3,13 @@ import { AppError } from '../../common/errors';
 import { CompanyPriority } from '@prisma/client';
 
 export class CompaniesService {
+
+    static async getAllCompanies() {
+        return prisma.company.findMany({
+            orderBy: { name: 'asc' }
+        });
+    }
+
     static async createCompany(data: {
         placementDriveId: string;
         name: string;

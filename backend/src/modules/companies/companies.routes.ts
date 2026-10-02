@@ -46,4 +46,13 @@ router.get('/:id', authenticate, async (req: Request<{ id: string }>, res: Respo
     }
 });
 
+router.get('/', authenticate, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const companies = await CompaniesService.getAllCompanies();
+        res.status(200).json({ success: true, data: companies });
+    } catch (err) {
+        next(err);
+    }
+});
+
 export default router;

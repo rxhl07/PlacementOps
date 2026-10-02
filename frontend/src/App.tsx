@@ -5,6 +5,14 @@ import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './pages/auth/LoginPage';
 import { Role } from './types/domain';
 
+// Import Phase 4 Operational Management Pages
+import { DrivesPage } from './pages/drives/DrivesPage';
+import { StudentsPage } from './pages/students/StudentsPage';
+import { CompaniesPage } from './pages/companies/CompaniesPage';
+import { DashboardPage } from './pages/dashboard/DashboardPage';
+import { ConflictsPage } from './pages/schedules/ConflictsPage';
+import { ReplanningPage } from './pages/replanning/ReplanningPage';
+
 const DashboardPlaceholder = () => (
     <div className="p-6 bg-white border border-surface-border rounded-xl shadow-subtle">
         <h2 className="text-base font-bold text-slate-900">PlacementOps Workspace</h2>
@@ -34,18 +42,19 @@ export function App() {
                     {/* Authenticated Application Shell */}
                     <Route element={<ProtectedRoute />}>
                         <Route element={<AppShell />}>
-                            <Route path="/dashboard" element={<DashboardPlaceholder />} />
+                            <Route path="/dashboard" element={<DashboardPage />} />
 
-                            {/* Coordinator Protected Routes */}
+                            {/* Coordinator / Admin Protected Routes */}
                             <Route element={<RoleGuard allowedRoles={[Role.COORDINATOR, Role.ADMIN]} />}>
-                                <Route path="/drives" element={<DashboardPlaceholder />} />
-                                <Route path="/students" element={<DashboardPlaceholder />} />
-                                <Route path="/companies" element={<DashboardPlaceholder />} />
+                                <Route path="/drives" element={<DrivesPage />} />
+                                <Route path="/students" element={<StudentsPage />} />
+                                <Route path="/companies" element={<CompaniesPage />} />
                                 <Route path="/rooms" element={<DashboardPlaceholder />} />
                                 <Route path="/panels" element={<DashboardPlaceholder />} />
                                 <Route path="/schedules" element={<DashboardPlaceholder />} />
-                                <Route path="/replans" element={<DashboardPlaceholder />} />
                                 <Route path="/audit-logs" element={<DashboardPlaceholder />} />
+                                <Route path="/schedules/:driveId/conflicts" element={<ConflictsPage />} />
+                                <Route path="/replans" element={<ReplanningPage />} />
                             </Route>
 
                             {/* Student Protected Routes */}
