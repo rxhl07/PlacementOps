@@ -6,7 +6,7 @@ export class DistributedLock {
      * Acquires an atomic lock using Redis SET key value NX PX.
      * Prevents concurrent execution of schedule generation or replanning.
      */
-    static async acquire(lockKey: string, ttlMs: number = 10000): Promise<string | null> {
+    static async acquire(lockKey: string, ttlMs: number = 60000): Promise<string | null> {
         const lockValue = Math.random().toString(36).substring(2) + Date.now().toString(36);
         const result = await redis.set(`lock:${lockKey}`, lockValue, 'PX', ttlMs, 'NX');
         return result === 'OK' ? lockValue : null;

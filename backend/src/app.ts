@@ -10,6 +10,7 @@ import resourcesRoutes from './modules/resources/resources.routes';
 import interviewsRoutes from './modules/interviews/interviews.routes';
 import schedulesRoutes from './modules/schedules/schedule.routes';
 import replanningRoutes from './modules/replanning/replanning.routes';
+import studentRoutes from './students/student.routes';
 
 export const createApp = () => {
     const app = express();
@@ -25,6 +26,7 @@ export const createApp = () => {
     app.use('/api/interviews', interviewsRoutes);
     app.use('/api/schedules', schedulesRoutes);
     app.use('/api/replans', replanningRoutes);
+    app.use('/api/students', studentRoutes);
 
     // Deep health check verifying PostgreSQL connection
     app.get('/health', async (_req: Request, res: Response, next: NextFunction) => {

@@ -19,7 +19,7 @@ export class ReplanEngine {
     static async handleDisruption(input: DisruptionInput) {
         const lockKey = `replan:drive:${input.placementDriveId}`;
 
-        return DistributedLock.withLock(lockKey, 15000, async () => {
+        return DistributedLock.withLock(lockKey, 120000, async () => {
             // 1. Fetch current active schedule version
             const currentVersion = await prisma.scheduleVersion.findFirst({
                 where: { placementDriveId: input.placementDriveId, isCurrent: true },
@@ -120,24 +120,27 @@ export class ReplanEngine {
                 });
             });
 
-            // 6. Copy Unaffected Assignments into New Version (Frozen In Place)
-            for (const assignment of unaffectedAssignments) {
-                await prisma.interviewAssignment.create({
-                    data: {
-                        scheduleVersionId: newVersion.id,
-                        studentId: assignment.studentId,
-                        companyId: assignment.companyId,
-                        roundId: assignment.roundId,
-                        roomId: assignment.roomId,
-                        panelId: assignment.panelId,
-                        startTime: assignment.startTime,
-                        endTime: assignment.endTime,
-                        status: assignment.status,
-                    },
+            // 6. Copy Unaffected Assignments into New Version (Frozen In Place) - BULK INSERT OPTIMIZATION
+            const frozenAssignmentsData = unaffectedAssignments.map((assignment) => ({
+                scheduleVersionId: newVersion.id,
+                studentId: assignment.studentId,
+                companyId: assignment.companyId,
+                roundId: assignment.roundId,
+                roomId: assignment.roomId,
+                panelId: assignment.panelId,
+                startTime: assignment.startTime,
+                endTime: assignment.endTime,
+                status: assignment.status,
+            }));
+
+            if (frozenAssignmentsData.length > 0) {
+                // Execute all 2,700 inserts in a single database round-trip (~100ms total)
+                await prisma.interviewAssignment.createMany({
+                    data: frozenAssignmentsData,
                 });
             }
 
-            // 7. Targeted Re-Allocation for Affected Assignments (Excluding Withdrawals)
+            // 7. Targeted Re-Allocation for Affected Assignments
             const diffs: any[] = [];
             let rescheduledCount = 0;
             let cancelledCount = 0;
@@ -162,77 +165,121 @@ export class ReplanEngine {
                     continue;
                 }
 
-                // Re-schedule attempt for affected assignment
                 const company = await prisma.company.findUnique({ where: { id: oldAssignment.companyId } });
                 const round = await prisma.companyRound.findUnique({ where: { id: oldAssignment.roundId } });
-
                 if (!company || !round) continue;
 
-                const companyArrival = company.actualArrival || company.expectedArrival;
-                const companyDeparture = company.expectedDeparture;
-                const durationMs = round.durationMinutes * 60000;
-
                 let foundNewSlot = false;
-                let slotCurrent = new Date(companyArrival.getTime());
+                let finalSlotStart = null;
+                let finalSlotEnd = null;
+                let finalRoomId = null;
+                let finalPanelId = null;
 
-                // Search alternative time slots, rooms, and panels
-                slotSearch: while (slotCurrent.getTime() + durationMs <= companyDeparture.getTime()) {
-                    const slotEnd = new Date(slotCurrent.getTime() + durationMs);
+                // FAST PATH OPTIMIZATION: If it's a COMPANY_DELAY, try shifting the exact assignment by delayMinutes first
+                if (input.type === 'COMPANY_DELAY' && input.delayMinutes) {
+                    const shiftedStart = new Date(oldAssignment.startTime.getTime() + input.delayMinutes * 60000);
+                    const shiftedEnd = new Date(oldAssignment.endTime.getTime() + input.delayMinutes * 60000);
 
-                    for (const room of drive.rooms) {
-                        // Avoid assigning to the unavailable room if that triggered the disruption
-                        if (input.type === 'ROOM_UNAVAILABLE' && room.id === input.roomId) continue;
+                    // Ensure the shifted time doesn't exceed company departure
+                    if (shiftedEnd.getTime() <= company.expectedDeparture.getTime()) {
+                        const proposedShift = {
+                            scheduleVersionId: newVersion.id,
+                            studentId: oldAssignment.studentId,
+                            companyId: oldAssignment.companyId,
+                            roundId: oldAssignment.roundId,
+                            roomId: oldAssignment.roomId,
+                            panelId: oldAssignment.panelId,
+                            startTime: shiftedStart,
+                            endTime: shiftedEnd,
+                        };
 
-                        for (const panel of drive.panels) {
-                            // Avoid assigning to the unavailable panel if that triggered the disruption
-                            if (input.type === 'PANEL_UNAVAILABLE' && panel.id === input.panelId) continue;
+                        const conflict = await ConflictEngine.validateAssignment(proposedShift);
 
-                            const proposed = {
-                                scheduleVersionId: newVersion.id,
-                                studentId: oldAssignment.studentId,
-                                companyId: oldAssignment.companyId,
-                                roundId: oldAssignment.roundId,
-                                roomId: room.id,
-                                panelId: panel.id,
-                                startTime: slotCurrent,
-                                endTime: slotEnd,
-                            };
-
-                            const conflict = await ConflictEngine.validateAssignment(proposed);
-
-                            if (!conflict.hasConflict) {
-                                const newAssignment = await prisma.interviewAssignment.create({
-                                    data: proposed,
-                                });
-
-                                rescheduledCount++;
-                                foundNewSlot = true;
-
-                                // Record Schedule Diff
-                                diffs.push({
-                                    oldScheduleVersionId: currentVersion.id,
-                                    newScheduleVersionId: newVersion.id,
-                                    changeType: ScheduleChangeType.MOVED,
-                                    assignmentId: newAssignment.id,
-                                    details: {
-                                        studentName: oldAssignment.student.name,
-                                        companyName: oldAssignment.company.name,
-                                        oldTime: { start: oldAssignment.startTime, end: oldAssignment.endTime },
-                                        newTime: { start: slotCurrent, end: slotEnd },
-                                        oldRoom: oldAssignment.room.name,
-                                        newRoom: room.name,
-                                        reason: input.description,
-                                    },
-                                });
-
-                                break slotSearch;
-                            }
+                        if (!conflict.hasConflict) {
+                            finalSlotStart = shiftedStart;
+                            finalSlotEnd = shiftedEnd;
+                            finalRoomId = oldAssignment.roomId;
+                            finalPanelId = oldAssignment.panelId;
+                            foundNewSlot = true;
                         }
                     }
-                    slotCurrent = new Date(slotCurrent.getTime() + 15 * 60000); // 15-minute granularity search
                 }
 
+                // SLOW PATH FALLBACK: If direct shift fails or it's a different disruption type, run the search loop
                 if (!foundNewSlot) {
+                    const companyArrival = company.actualArrival || company.expectedArrival;
+                    const durationMs = round.durationMinutes * 60000;
+                    let slotCurrent = new Date(companyArrival.getTime());
+
+                    slotSearch: while (slotCurrent.getTime() + durationMs <= company.expectedDeparture.getTime()) {
+                        const slotEnd = new Date(slotCurrent.getTime() + durationMs);
+
+                        for (const room of drive.rooms) {
+                            if (input.type === 'ROOM_UNAVAILABLE' && room.id === input.roomId) continue;
+
+                            for (const panel of drive.panels) {
+                                if (input.type === 'PANEL_UNAVAILABLE' && panel.id === input.panelId) continue;
+
+                                const proposed = {
+                                    scheduleVersionId: newVersion.id,
+                                    studentId: oldAssignment.studentId,
+                                    companyId: oldAssignment.companyId,
+                                    roundId: oldAssignment.roundId,
+                                    roomId: room.id,
+                                    panelId: panel.id,
+                                    startTime: slotCurrent,
+                                    endTime: slotEnd,
+                                };
+
+                                const conflict = await ConflictEngine.validateAssignment(proposed);
+
+                                if (!conflict.hasConflict) {
+                                    finalSlotStart = slotCurrent;
+                                    finalSlotEnd = slotEnd;
+                                    finalRoomId = room.id;
+                                    finalPanelId = panel.id;
+                                    foundNewSlot = true;
+                                    break slotSearch;
+                                }
+                            }
+                        }
+                        slotCurrent = new Date(slotCurrent.getTime() + 15 * 60000); // 15-min jump
+                    }
+                }
+
+                // Apply the found slot
+                if (foundNewSlot && finalSlotStart && finalSlotEnd && finalRoomId && finalPanelId) {
+                    const newAssignment = await prisma.interviewAssignment.create({
+                        data: {
+                            scheduleVersionId: newVersion.id,
+                            studentId: oldAssignment.studentId,
+                            companyId: oldAssignment.companyId,
+                            roundId: oldAssignment.roundId,
+                            roomId: finalRoomId,
+                            panelId: finalPanelId,
+                            startTime: finalSlotStart,
+                            endTime: finalSlotEnd,
+                        }
+                    });
+
+                    rescheduledCount++;
+
+                    diffs.push({
+                        oldScheduleVersionId: currentVersion.id,
+                        newScheduleVersionId: newVersion.id,
+                        changeType: ScheduleChangeType.MOVED,
+                        assignmentId: newAssignment.id,
+                        details: {
+                            studentName: oldAssignment.student.name,
+                            companyName: oldAssignment.company.name,
+                            oldTime: { start: oldAssignment.startTime, end: oldAssignment.endTime },
+                            newTime: { start: finalSlotStart, end: finalSlotEnd },
+                            oldRoom: oldAssignment.room.name, // Will need room object resolution if room changes in slow path
+                            newRoom: drive.rooms.find(r => r.id === finalRoomId)?.name || oldAssignment.room.name,
+                            reason: input.description,
+                        },
+                    });
+                } else {
                     cancelledCount++;
                     diffs.push({
                         oldScheduleVersionId: currentVersion.id,

@@ -12,6 +12,8 @@ import { CompaniesPage } from './pages/companies/CompaniesPage';
 import { DashboardPage } from './pages/dashboard/DashboardPage';
 import { ConflictsPage } from './pages/schedules/ConflictsPage';
 import { ReplanningPage } from './pages/replanning/ReplanningPage';
+import { StudentDashboard } from './pages/students/StudentDashboard';
+import { CompanyDashboard } from './pages/companies/CompanyDashboard';
 
 const DashboardPlaceholder = () => (
     <div className="p-6 bg-white border border-surface-border rounded-xl shadow-subtle">
@@ -59,8 +61,15 @@ export function App() {
 
                             {/* Student Protected Routes */}
                             <Route element={<RoleGuard allowedRoles={[Role.STUDENT]} />}>
-                                <Route path="/student/dashboard" element={<DashboardPlaceholder />} />
-                                <Route path="/student/schedule" element={<DashboardPlaceholder />} />
+                                <Route path="/dashboard" element={<StudentDashboard />} />
+                                <Route path="/students/dashboard" element={<StudentDashboard />} />
+                                <Route path="/students/schedule" element={<StudentDashboard />} />
+                            </Route>
+
+                            {/* Company Coordinator Protected Routes */}
+                            <Route element={<RoleGuard allowedRoles={[Role.COMPANY_COORDINATOR]} />}>
+                                <Route path="/company/dashboard" element={<CompanyDashboard />} />
+                                <Route path="/company/schedule" element={<CompanyDashboard />} />
                             </Route>
 
                             <Route path="/" element={<Navigate to="/dashboard" replace />} />
